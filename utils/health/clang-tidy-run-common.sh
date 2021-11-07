@@ -1,21 +1,23 @@
-# Copyright (c) 2014-2019, The Monero Project
-# 
+#!/bin/bash -e
+
+# Copyright (c) 2014-2021, The Monero Project
+#
 # All rights reserved.
-# 
+#
 # Redistribution and use in source and binary forms, with or without modification, are
 # permitted provided that the following conditions are met:
-# 
+#
 # 1. Redistributions of source code must retain the above copyright notice, this list of
 #    conditions and the following disclaimer.
-# 
+#
 # 2. Redistributions in binary form must reproduce the above copyright notice, this list
 #    of conditions and the following disclaimer in the documentation and/or other
 #    materials provided with the distribution.
-# 
+#
 # 3. Neither the name of the copyright holder nor the names of its contributors may be
 #    used to endorse or promote products derived from this software without specific
 #    prior written permission.
-# 
+#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
 # EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
 # MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
@@ -26,43 +28,38 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-cmake_minimum_required(VERSION 3.5)
+# clang-tidy runs lint checks on C & C++ sources and headers.
+# Don't use this script directly but call clang-tidy-run-cc.sh or clang-tidy-run-cpp.sh instead
 
-project(easylogging CXX)
+DIR_BUILD_BASE="build/clang-tidy"
+RESULT_BASE="clang-tidy-result"
 
-set(CMAKE_CXX_STANDARD 11)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+function tidy_for_language() {
+	LANG="${1}"
+	DIR_BUILD="${DIR_BUILD_BASE}-${LANG}"
+	RESULT="${RESULT_BASE}-${LANG}.txt"
 
-monero_enable_coverage()
+	mkdir -p "$DIR_BUILD" && pushd "$DIR_BUILD"
+	rm `find . -name "CMakeCache.txt"` || true
 
-find_package(Threads)
-find_package(Backtrace)
+	cmake ../.. \
+	-DCMAKE_C_COMPILER=clang \
+	-DCMAKE_CXX_COMPILER=clang++ \
+	-DUSE_CCACHE=ON \
+	-DUSE_CLANG_TIDY_${LANG}=ON \
+	-DBUILD_SHARED_LIBS=ON \
+	-DBUILD_TESTS=ON
 
-monero_find_all_headers(EASYLOGGING_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}")
+	make clean 					# Clean up, so that the result can be regenerated from scratch
+	time make -k 2>&1 | tee "$RESULT"		# Build and store the result. -k means: ignore errors
+	#time make -k easylogging 2>&1 | tee "$RESULT"	# Quick testing: build a single target
+	KPI=$(cat "$RESULT" | wc -l)
+	tar -cJvf "$RESULT.txz" "$RESULT"		# Zip the result, because it's huge.
+	rm -v "$RESULT"
+	echo ""
+	echo "Readable result stored in: $DIR_BUILD/$RESULT.txz"
 
-add_library(easylogging
-  easylogging++.cc
-  ${EASYLOGGING_HEADERS}
-  )
+	echo "$KPI" > "kpis.txt"
 
-include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
-include_directories("${CMAKE_CURRENT_BINARY_DIR}")
-target_link_libraries(easylogging
-  PRIVATE
-    ${CMAKE_THREAD_LIBS_INIT}
-    ${Backtrace_LIBRARIES})
-
-# GUI/libwallet install target
-if (BUILD_GUI_DEPS)
-    if(IOS)
-        set(lib_folder lib-${ARCH})
-    else()
-        set(lib_folder lib)
-    endif()
-    install(TARGETS easylogging
-        ARCHIVE DESTINATION ${lib_folder}
-        LIBRARY DESTINATION ${lib_folder})
-endif()
-set_property(TARGET easylogging APPEND PROPERTY COMPILE_FLAGS "-fPIC")
-
+	popd
+}
